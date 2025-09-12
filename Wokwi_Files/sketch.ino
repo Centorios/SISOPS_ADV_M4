@@ -6,21 +6,26 @@
 // Servo se mueve si el peso baja de 1 kg (empieza a servir comida)
 // Servo vuelve a su posición si el peso sube de 1 kg (deja de servir comida)
 
-int const LedPin1       = 22;
-int const LedPin2       = 23;
-int const LoadCellDTPin       = 4;
-int const LoadCellSCKPin       = 2;
-int const TriggerPin       = 27;
-int const EchoPin          = 26;
-int const ServoPin		     = 33;
-int const PotentiometerPin = 35;
+#define LedPin1 22
+#define LedPin2 23
+#define LoadCellDTPin 4
+#define LoadCellSCKPin 2
+#define TriggerPin 27
+#define EchoPin 26
+#define ServoPin 33
+#define PotentiometerPin 35
 
-int const PotThreshold = 2048;
-int const DistanceThreshold = 20;
+#define PotThreshold 2048
+#define DistanceThreshold 20
 
-float const WeightThreshold = 1.0;
+#define WeightThreshold 1.0
 int const ServoLowWeightPosition = 90;
 int const ServoNormalPosition = 0;
+
+#define ledResolution 8
+#define ledFrequency 5000
+#define ledHigh 255
+#define ledLow 0
 
 int potValue 				   = 0 ;
 int angle 				   = 0 ;
@@ -66,8 +71,9 @@ void setup()
 
   pinMode(TriggerPin, OUTPUT);  
   pinMode(EchoPin, INPUT);
-  pinMode(LedPin1, OUTPUT);
-  pinMode(LedPin2, OUTPUT);
+
+  ledcAttach(LedPin1, ledFrequency, ledResolution);
+  ledcAttach(LedPin2, ledFrequency, ledResolution);
 
   delay(1000);
 }
@@ -95,12 +101,9 @@ long readUltrasonicSensor()
   return pulseIn(EchoPin, HIGH);
 }
 
-void readSensors()
-{
-  potValue = analogRead(PotentiometerPin);
-  
-  objectTime = readUltrasonicSensor();
 
+void readLoadCell()
+{
   if (loadCell.is_ready()) {
     weight = loadCell.get_units(5);
     
@@ -112,6 +115,16 @@ void readSensors()
   } else {
     Serial.println("Load cell not ready!");
   }
+}
+
+void readSensors()
+{
+  potValue = analogRead(PotentiometerPin);
+  
+  objectTime = readUltrasonicSensor();
+
+  readLoadCell();
+
 }
 
 void performCalculations() 
@@ -133,15 +146,18 @@ void performActions()
   }
 
   if (potValue > PotThreshold) {
-    digitalWrite(LedPin1, HIGH);
+  ledcWrite(LedPin1, ledHigh);
   } else {
-    digitalWrite(LedPin1, LOW);
+  ledcWrite(LedPin1, ledLow);
   }
   
   if (objectDistance > DistanceThreshold) {
-    digitalWrite(LedPin2, HIGH);
+
+    ledcWrite(LedPin2, ledHigh);
+
   } else {
-    digitalWrite(LedPin2, LOW);
+
+    ledcWrite(LedPin2, ledLow);
   }
 }
 
@@ -162,10 +178,10 @@ void showLogs()
   Serial.print("cm");
   
   Serial.print(" LED1:");
-  Serial.print(digitalRead(LedPin1) ? "ON" : "OFF");
+  Serial.print(ledcRead(LedPin1) == ledHigh ? "ON" : "OFF");
   
   Serial.print(" LED2:");
-  Serial.print(digitalRead(LedPin2) ? "ON" : "OFF");
+  Serial.print(ledcRead(LedPin2) == ledHigh ? "ON" : "OFF");
   
   Serial.println();
 }
