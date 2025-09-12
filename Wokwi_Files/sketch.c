@@ -101,7 +101,6 @@ void setup()
 
     ledcAttach(LedPinWater, ledFrequency, ledResolution);
     ledcAttach(LedPinFood, ledFrequency, ledResolution);
-
 }
 
 void loop()
@@ -343,30 +342,30 @@ int calculateFood()
 
 void getEvent()
 {
-
+    int lastEvent = currentEvent;
     currentEvent = -1;
     // most prioritized event first
-    if (weight < WeightThreshold && currentEvent == -1)
+    if (weight < WeightThreshold && currentEvent == -1 && lastEvent != INSUFFICIENT_FOOD)
     {
         currentEvent = INSUFFICIENT_FOOD;
     }
 
-    if (potValue < PotThreshold && currentEvent == -1)
+    if (potValue < PotThreshold && currentEvent == -1 && lastEvent != INSUFFICIENT_WATER)
     {
         currentEvent = INSUFFICIENT_WATER;
     }
 
-    if (objectDistance >= DistanceThreshold && objectDistance > 0 && currentEvent == -1)
+    if (objectDistance >= DistanceThreshold && objectDistance > 0 && currentEvent == -1 && lastEvent != OBJECT_FAR)
     {
         currentEvent = OBJECT_FAR;
     }
 
-    if (potValue >= PotThreshold && currentEvent == -1)
+    if (potValue >= PotThreshold && currentEvent == -1 && lastEvent != SUFFICIENT_WATER)
     {
         currentEvent = SUFFICIENT_WATER;
     }
 
-    if (objectDistance < DistanceThreshold && objectDistance > 0 && currentEvent == -1)
+    if (objectDistance < DistanceThreshold && objectDistance > 0 && currentEvent == -1 && lastEvent != OBJECT_NEARBY)
     {
         currentEvent = OBJECT_NEARBY;
     }
@@ -375,9 +374,6 @@ void getEvent()
     {
         currentEvent = RETURN_TO_IDLE;
     }
-
-
-
 }
 
 void getNewState()
@@ -408,10 +404,6 @@ void getNewState()
     }
 }
 
-
-
-
-
 void showLogs()
 {
     Serial.print("Weight: ");
@@ -441,7 +433,4 @@ void showLogs()
     Serial.print(currentEvent);
 
     Serial.println();
-
 }
-
-
