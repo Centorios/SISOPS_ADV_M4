@@ -121,6 +121,7 @@ void stateMachine()
         readLoadCell();
         performCalculations();
         getEvent();
+        getNewState();
         break;
 
     case STATE_LOAD_CELL_FULL:
@@ -282,9 +283,7 @@ void readLoadCell()
 
 void performCalculations()
 {
-
     angle = map(potValue, 0, 4096, 0, 180);
-
     objectDistance = 0.01723 * objectTime;
 }
 
@@ -345,33 +344,72 @@ int calculateFood()
 void getEvent()
 {
 
-    currentEvent = RETURN_TO_IDLE;
+    currentEvent = -1;
     // most prioritized event first
-    if (weight < WeightThreshold && currentEvent != RETURN_TO_IDLE)
+    if (weight < WeightThreshold && currentEvent == -1)
     {
         currentEvent = INSUFFICIENT_FOOD;
     }
 
-    if (potValue < PotThreshold && currentEvent != RETURN_TO_IDLE)
+    if (potValue < PotThreshold && currentEvent == -1)
     {
         currentEvent = INSUFFICIENT_WATER;
     }
 
-    if (potValue >= PotThreshold && currentEvent != RETURN_TO_IDLE)
+    if (objectDistance >= DistanceThreshold && objectDistance > 0 && currentEvent == -1)
+    {
+        currentEvent = OBJECT_FAR;
+    }
+
+    if (potValue >= PotThreshold && currentEvent == -1)
     {
         currentEvent = SUFFICIENT_WATER;
     }
 
-    if (objectDistance < DistanceThreshold && objectDistance > 0 && currentEvent != RETURN_TO_IDLE)
+    if (objectDistance < DistanceThreshold && objectDistance > 0 && currentEvent == -1)
     {
         currentEvent = OBJECT_NEARBY;
     }
 
-    if (objectDistance >= DistanceThreshold && objectDistance <= 0 && currentEvent != RETURN_TO_IDLE)
+    if (currentEvent == -1)
     {
-        currentEvent = OBJECT_FAR;
+        currentEvent = RETURN_TO_IDLE;
+    }
+
+
+
+}
+
+void getNewState()
+{
+    switch (currentEvent)
+    {
+    case INSUFFICIENT_FOOD:
+        currentState = STATE_LOAD_CELL_EMPTY;
+        break;
+    case INSUFFICIENT_WATER:
+        currentState = STATE_WATER_LEVEL_DOWN;
+        break;
+    case SUFFICIENT_WATER:
+        currentState = STATE_WATER_LEVEL_OK;
+        break;
+    case OBJECT_NEARBY:
+        currentState = STATE_ULTRASOUND_CLOSE;
+        break;
+    case OBJECT_FAR:
+        currentState = STATE_ULTRASOUND_FAR;
+        break;
+    case RETURN_TO_IDLE:
+        currentState = STATE_IDLE;
+        break;
+    default:
+        Serial.println("Unknown event!");
+        break;
     }
 }
+
+
+
 
 
 void showLogs()
@@ -396,5 +434,14 @@ void showLogs()
     Serial.print(" LED2:");
     Serial.print(ledcRead(LedPinFood));
 
+    Serial.print(" State:");
+    Serial.print(currentState);
+
+    Serial.print(" Event:");
+    Serial.print(currentEvent);
+
     Serial.println();
+
 }
+
+
