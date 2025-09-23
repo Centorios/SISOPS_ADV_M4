@@ -428,7 +428,6 @@ void showLogs()
 
     Serial.println();
 }
-}
 
 
 /*
