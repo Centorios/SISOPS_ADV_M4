@@ -8,6 +8,13 @@
 
 #define LedPinWater 22
 #define LedPinFood 23
+#define ledResolution 8
+#define ledFrequency 5000
+#define ledHigh 255
+#define ledLow 0
+#define LedPinWaterChannel 6
+#define LedPinFoodChannel 7
+
 #define LoadCellDTPin 4
 #define LoadCellSCKPin 2
 #define TriggerPin 27
@@ -47,10 +54,7 @@ enum Events
     RETURN_TO_IDLE = 6,
 };
 
-#define ledResolution 8
-#define ledFrequency 5000
-#define ledHigh 255
-#define ledLow 0
+
 
 int potValue = 0;
 int angle = 0;
@@ -98,15 +102,14 @@ void setup()
 
     pinMode(TriggerPin, OUTPUT);
     pinMode(EchoPin, INPUT);
-
-    ledcAttach(LedPinWater, ledFrequency, ledResolution);
-    ledcAttach(LedPinFood, ledFrequency, ledResolution);
+    ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
+    ledcAttachChannel(LedPinFood, ledFrequency, ledResolution, LedPinFoodChannel);
 }
 
 void loop()
 {
     stateMachine();
-    delay(1000);
+    delay(100);
 }
 
 void stateMachine()
@@ -413,18 +416,9 @@ void showLogs()
     Serial.print("PotValue:");
     Serial.print(potValue);
 
-    Serial.print(" Angle:");
-    Serial.print(angle);
-
     Serial.print(" Distance: ");
     Serial.print(objectDistance);
     Serial.print("cm");
-
-    Serial.print(" LED1:");
-    Serial.print(ledcRead(LedPinWater));
-
-    Serial.print(" LED2:");
-    Serial.print(ledcRead(LedPinFood));
 
     Serial.print(" State:");
     Serial.print(currentState);
