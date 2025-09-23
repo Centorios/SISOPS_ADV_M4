@@ -428,3 +428,42 @@ void showLogs()
 
     Serial.println();
 }
+}
+
+
+/*
+#define TAM_PILA 1024
+#define PRIORIDAD 1
+#define TIEMPO_TIMER 1000 // Cada 1 segundo (en microsegundos)
+
+TimerHandle_t temporizador;
+TaskHandle_t miTareaHandle;
+
+// Handler del timer por HW
+void tareaBlinkLed(void *parameter) {
+    while(1) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // Espera notificación
+        led_estado = !led_estado;
+        digitalWrite(PIN_LED, led_estado);
+    }
+}
+
+// Handler del temporizador
+void callbackTemporizador(TimerHandle_t xTimer) {
+    // Como el callback no puede ejecutar algo pesado
+    // Se le notifica a otra tarea que realice la acción
+    // Solo notifica a la tarea
+    xTaskNotifyGive(miTareaHandle);
+}
+
+// Setup
+void setup() {
+    // Creo la tarea
+    xTaskCreate(tareaBlinkLed, "tarea_Blink_led", TAM_PILA, NULL, PRIORIDAD, &miTareaHandle);
+
+    // Creo el temporizador
+    temporizador = xTimerCreate("timer", pdMS_TO_TICKS(TIEMPO_TIMER), pdTRUE, NULL, callbackTemporizador);
+    // Inicio el temporizador
+    xTimerStart(temporizador, 0);
+}
+*/
