@@ -25,7 +25,7 @@
 #define PotThreshold 2048
 #define DistanceThreshold 20
 
-#define WeightThreshold 1.0
+#define WeightThreshold 120.0
 int const ServoLowWeightPosition = 90;
 int const ServoNormalPosition = 0;
 
@@ -411,7 +411,7 @@ void showLogs()
 {
     Serial.print("Weight: ");
     Serial.print(weight, 3);
-    Serial.print("kg ");
+    Serial.print("g ");
 
     Serial.print("PotValue:");
     Serial.print(potValue);
