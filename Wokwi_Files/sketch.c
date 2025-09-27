@@ -1,5 +1,7 @@
 #include <ESP32Servo.h>
 #include <HX711.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // LedPinWater se enciende si falta agua (potenciometro)
 // LedPinFood se enciende si falta comida (ultrasonido)
@@ -25,7 +27,23 @@
 #define PotThreshold 2048
 #define DistanceThreshold 20
 
-#define WeightThreshold 120.0
+#define TIMER_CELL 1000 //1000ms = 1s
+#define TIMER_GLOBAL 100 //100ms
+#define TIMER_LOGS 1500 //1500ms
+
+//120g
+#define WeightThreshold 0.120
+
+#define TAM_PILA 1024
+
+enum Priorities
+{
+    PRIORITY_HIGH = 0,
+    PRIORITY_MEDIUM = 1,
+    PRIORITY_LOW = 2,
+};
+
+
 int const ServoLowWeightPosition = 90;
 int const ServoNormalPosition = 0;
 
@@ -54,18 +72,62 @@ enum Events
     RETURN_TO_IDLE = 6,
 };
 
-
-
 int potValue = 0;
 int angle = 0;
 int objectTime = 0;
 int objectDistance = 0;
 float weight = 0.0;
+float calibration_factor = 420.0;
+unsigned long timeSinceBoot;
 
 Servo servo1;
 HX711 loadCell;
 
-float calibration_factor = 420.0;
+TimerHandle_t callbackTimer;
+TaskHandle_t TaskHandlerCallback;
+
+void callbackTemporizador(TimerHandle_t xTimer) {
+    // Wake the servo task (counting notification)
+    xTaskNotifyGive(TaskHandlerCallback);
+}
+
+void concurrentServoTask(void *parameters) {
+    ulTaskNotifyTake(pdTRUE, 0);
+    while(1) {
+        // Block here until the timer gives a notification.
+        // pdTRUE: clear (consume) the count so we don't accumulate stale ticks.
+        // portMAX_DELAY: wait indefinitely.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        // Once awakened, perform the logic that was previously time-delayed.
+        currentEvent = calculateFood();
+        if (currentEvent == INSUFFICIENT_FOOD) {
+            HandleLoadCellEmpty();
+        } else if (currentEvent == SUFFICIENT_FOOD) {
+            HandleLoadCellFull();
+        }
+    }
+}
+
+void concurrentReadSensorsAndPerformCalculations(void *parameters) {
+    while(1) {
+        potValue = analogRead(PotentiometerPin);
+        objectTime = readUltrasonicSensor();
+        readLoadCell();
+        performCalculations();
+        vTaskDelay(TIMER_GLOBAL);
+    }
+}
+
+bool timestampEnabler(unsigned long* lastTimestamp)
+{
+    if ((millis() - *lastTimestamp) >= TIMER_LOGS)
+    {
+        *lastTimestamp = millis();
+        return true;
+    }
+    return false;
+}
 
 void setup()
 {
@@ -76,24 +138,18 @@ void setup()
     servo1.write(ServoNormalPosition);
 
     loadCell.begin(LoadCellDTPin, LoadCellSCKPin);
-
     Serial.println("Load cell initializing...");
 
-    while (!loadCell.is_ready())
-    {
+    while (!loadCell.is_ready()) {
         Serial.println("Waiting for load cell...");
-        delay(100);
+        delay(TIMER_CELL);
     }
 
     loadCell.set_scale(calibration_factor);
 
     Serial.println("Remove all weight from the load cell and press any key to tare...");
-    while (!Serial.available())
-    {
-        delay(100);
-    }
+    while (!Serial.available()) { }
     Serial.read();
-
     loadCell.tare(10);
 
     Serial.println("Load cell tared and ready!");
@@ -104,34 +160,40 @@ void setup()
     pinMode(EchoPin, INPUT);
     ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
     ledcAttachChannel(LedPinFood, ledFrequency, ledResolution, LedPinFoodChannel);
+
+    xTaskCreate(concurrentReadSensorsAndPerformCalculations,"concurrent_sensor_task",TAM_PILA, NULL, PRIORITY_MEDIUM, NULL);
+
+    xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, PRIORITY_MEDIUM, &TaskHandlerCallback);
+    callbackTimer = xTimerCreate("timer",pdMS_TO_TICKS(TIMER_GLOBAL),pdTRUE,NULL,callbackTemporizador);
+    xTimerStart(callbackTimer, 0);
+    timeSinceBoot = millis();
 }
 
+//core 1 by default
 void loop()
 {
     stateMachine();
-    delay(100);
 }
 
 void stateMachine()
 {
+    if(timestampEnabler(&timeSinceBoot)){
     showLogs();
+    }
+
+
     switch (currentState)
     {
     case STATE_IDLE:
-        potValue = analogRead(PotentiometerPin);
-        objectTime = readUltrasonicSensor();
-        readLoadCell();
-        performCalculations();
         getEvent();
         getNewState();
-        break;
-
+    break;
+/*
     case STATE_LOAD_CELL_FULL:
 
         switch (currentEvent)
         {
         case SUFFICIENT_FOOD:
-            HandleLoadCellFull();
             break;
 
         case INSUFFICIENT_FOOD:
@@ -144,7 +206,8 @@ void stateMachine()
         }
 
         break;
-
+*/
+/*
     case STATE_LOAD_CELL_EMPTY:
 
         switch (currentEvent)
@@ -154,9 +217,6 @@ void stateMachine()
             break;
 
         case INSUFFICIENT_FOOD:
-
-            HandleLoadCellEmpty();
-            readLoadCell();
             currentEvent = calculateFood();
             break;
 
@@ -166,7 +226,7 @@ void stateMachine()
         }
 
         break;
-
+*/
     case STATE_WATER_LEVEL_DOWN:
 
         switch (currentEvent)
@@ -179,7 +239,10 @@ void stateMachine()
             break;
 
         default:
-            Serial.println("Unknown event!");
+            if (timestampEnabler(&timeSinceBoot))
+            {
+                Serial.println("Unknown event!");
+            }
             break;
         }
 
@@ -197,7 +260,10 @@ void stateMachine()
             break;
 
         default:
-            Serial.println("Unknown event!");
+            if (timestampEnabler(&timeSinceBoot))
+            {
+                Serial.println("Unknown event!");
+            }
             break;
         }
 
@@ -216,7 +282,10 @@ void stateMachine()
             break;
 
         default:
-            Serial.println("Unknown event!");
+            if (timestampEnabler(&timeSinceBoot))
+            {
+                Serial.println("Unknown event!");
+            }
             break;
         }
 
@@ -235,14 +304,20 @@ void stateMachine()
             break;
 
         default:
-            Serial.println("Unknown event!");
+            if (timestampEnabler(&timeSinceBoot))
+            {
+                Serial.println("Unknown event!");
+            }
             break;
         }
 
         break;
 
     default:
-        Serial.println("Unknown state!");
+        if (timestampEnabler(&timeSinceBoot))
+        {
+            Serial.println("Unknown event!");
+        }
         break;
     }
 
@@ -267,19 +342,10 @@ void readLoadCell()
     if (loadCell.is_ready())
     {
         weight = loadCell.get_units(5);
-
-        if (weight < -0.1)
-        {
-            Serial.println("Warning: Large negative weight detected - check calibration");
-        }
-        else if (weight < 0)
+        if (weight < 0)
         {
             weight = 0;
         }
-    }
-    else
-    {
-        Serial.println("Load cell not ready!");
     }
 }
 
@@ -292,42 +358,36 @@ void performCalculations()
 void HandleLoadCellFull()
 {
     servo1.write(ServoNormalPosition);
-    Serial.println("Normal weight restored. Servo in normal position.");
     currentState = STATE_IDLE;
 }
 
 void HandleLoadCellEmpty()
 {
     servo1.write(ServoLowWeightPosition);
-    Serial.println("Low weight detected! Servo moved to special position.");
-    currentState = STATE_LOAD_CELL_EMPTY;
+    currentState = STATE_IDLE;
 }
 
 void HandleWaterLevelDown()
 {
     ledcWrite(LedPinWater, ledHigh);
-    Serial.println("Low water level detected! LED1 ON.");
     currentState = STATE_IDLE;
 }
 
 void HandleWaterLevelOk()
 {
     ledcWrite(LedPinWater, ledLow);
-    Serial.println("Water level OK. LED1 OFF.");
     currentState = STATE_IDLE;
 }
 
 void HandleUltrasoundFar()
 {
     ledcWrite(LedPinFood, ledHigh);
-    Serial.println("No object detected nearby! LED2 ON.");
     currentState = STATE_IDLE;
 }
 
 void HandleUltrasoundClose()
 {
     ledcWrite(LedPinFood, ledLow);
-    Serial.println("Object detected nearby. LED2 OFF.");
     currentState = STATE_IDLE;
 }
 
@@ -346,34 +406,29 @@ int calculateFood()
 void getEvent()
 {
     int lastEvent = currentEvent;
-    currentEvent = -1;
-    // most prioritized event first
-    if (weight < WeightThreshold && currentEvent == -1 && lastEvent != INSUFFICIENT_FOOD)
-    {
-        currentEvent = INSUFFICIENT_FOOD;
-    }
+    currentEvent = STATE_IDLE;
 
-    if (potValue < PotThreshold && currentEvent == -1 && lastEvent != INSUFFICIENT_WATER)
+    if (potValue < PotThreshold && currentEvent == STATE_IDLE && lastEvent != INSUFFICIENT_WATER)
     {
         currentEvent = INSUFFICIENT_WATER;
     }
 
-    if (objectDistance >= DistanceThreshold && objectDistance > 0 && currentEvent == -1 && lastEvent != OBJECT_FAR)
+    if (objectDistance >= DistanceThreshold && objectDistance > 0 && currentEvent == STATE_IDLE && lastEvent != OBJECT_FAR)
     {
         currentEvent = OBJECT_FAR;
     }
 
-    if (potValue >= PotThreshold && currentEvent == -1 && lastEvent != SUFFICIENT_WATER)
+    if (potValue >= PotThreshold && currentEvent == STATE_IDLE && lastEvent != SUFFICIENT_WATER)
     {
         currentEvent = SUFFICIENT_WATER;
     }
 
-    if (objectDistance < DistanceThreshold && objectDistance > 0 && currentEvent == -1 && lastEvent != OBJECT_NEARBY)
+    if (objectDistance < DistanceThreshold && objectDistance > 0 && currentEvent == STATE_IDLE && lastEvent != OBJECT_NEARBY)
     {
         currentEvent = OBJECT_NEARBY;
     }
 
-    if (currentEvent == -1)
+    if (currentEvent == STATE_IDLE)
     {
         currentEvent = RETURN_TO_IDLE;
     }
@@ -409,11 +464,12 @@ void getNewState()
 
 void showLogs()
 {
+
     Serial.print("Weight: ");
     Serial.print(weight, 3);
-    Serial.print("g ");
+    Serial.print("g");
 
-    Serial.print("PotValue:");
+    Serial.print(" PotValue:");
     Serial.print(potValue);
 
     Serial.print(" Distance: ");
@@ -429,40 +485,3 @@ void showLogs()
     Serial.println();
 }
 
-
-/*
-#define TAM_PILA 1024
-#define PRIORIDAD 1
-#define TIEMPO_TIMER 1000 // Cada 1 segundo (en microsegundos)
-
-TimerHandle_t temporizador;
-TaskHandle_t miTareaHandle;
-
-// Handler del timer por HW
-void tareaBlinkLed(void *parameter) {
-    while(1) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // Espera notificación
-        led_estado = !led_estado;
-        digitalWrite(PIN_LED, led_estado);
-    }
-}
-
-// Handler del temporizador
-void callbackTemporizador(TimerHandle_t xTimer) {
-    // Como el callback no puede ejecutar algo pesado
-    // Se le notifica a otra tarea que realice la acción
-    // Solo notifica a la tarea
-    xTaskNotifyGive(miTareaHandle);
-}
-
-// Setup
-void setup() {
-    // Creo la tarea
-    xTaskCreate(tareaBlinkLed, "tarea_Blink_led", TAM_PILA, NULL, PRIORIDAD, &miTareaHandle);
-
-    // Creo el temporizador
-    temporizador = xTimerCreate("timer", pdMS_TO_TICKS(TIEMPO_TIMER), pdTRUE, NULL, callbackTemporizador);
-    // Inicio el temporizador
-    xTimerStart(temporizador, 0);
-}
-*/
