@@ -79,6 +79,7 @@ int objectDistance = 0;
 float weight = 0.0;
 float calibration_factor = 420.0;
 unsigned long timeSinceBoot;
+unsigned long timeCell;
 
 Servo servo1;
 HX711 loadCell;
@@ -109,6 +110,7 @@ void concurrentServoTask(void *parameters) {
     }
 }
 
+/*
 void concurrentReadSensorsAndPerformCalculations(void *parameters) {
     while(1) {
         potValue = analogRead(PotentiometerPin);
@@ -116,8 +118,12 @@ void concurrentReadSensorsAndPerformCalculations(void *parameters) {
         readLoadCell();
         performCalculations();
         vTaskDelay(TIMER_GLOBAL);
+        
+        getEvent();
+        getNewState();
     }
 }
+*/
 
 bool timestampEnabler(unsigned long* lastTimestamp)
 {
@@ -161,17 +167,31 @@ void setup()
     ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
     ledcAttachChannel(LedPinFood, ledFrequency, ledResolution, LedPinFoodChannel);
 
-    xTaskCreate(concurrentReadSensorsAndPerformCalculations,"concurrent_sensor_task",TAM_PILA, NULL, PRIORITY_MEDIUM, NULL);
+    /*xTaskCreate(concurrentReadSensorsAndPerformCalculations,"concurrent_sensor_task",TAM_PILA, NULL, PRIORITY_MEDIUM, NULL);*/
 
     xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, PRIORITY_MEDIUM, &TaskHandlerCallback);
     callbackTimer = xTimerCreate("timer",pdMS_TO_TICKS(TIMER_GLOBAL),pdTRUE,NULL,callbackTemporizador);
     xTimerStart(callbackTimer, 0);
-    timeSinceBoot = millis();
+    timeSinceBoot = timeCell = millis();
 }
 
 //core 1 by default
 void loop()
 {
+    potValue = analogRead(PotentiometerPin);
+    objectTime = readUltrasonicSensor();
+    
+    if ((millis() - timeCell) >= TIMER_CELL)
+    {   
+        readLoadCell();
+    }
+    
+    performCalculations();
+
+        
+    getEvent();
+    getNewState();
+
     stateMachine();
 }
 
@@ -185,8 +205,9 @@ void stateMachine()
     switch (currentState)
     {
     case STATE_IDLE:
-        getEvent();
-        getNewState();
+        /*
+        Dummy
+        */
     break;
 /*
     case STATE_LOAD_CELL_FULL:
@@ -339,6 +360,8 @@ long readUltrasonicSensor()
 
 void readLoadCell()
 {
+    timeCell = millis();
+
     if (loadCell.is_ready())
     {
         weight = loadCell.get_units(5);
