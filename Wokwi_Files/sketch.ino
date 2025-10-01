@@ -52,30 +52,32 @@ int currentEvent = 0;
 
 enum States
 {
-    STATE_IDLE = 0,
-    STATE_LOAD_CELL_FULL = 1,
-    STATE_LOAD_CELL_EMPTY = 2,
-    STATE_WATER_LEVEL_DOWN = 3,
-    STATE_WATER_LEVEL_OK = 4,
-    STATE_ULTRASOUND_FAR = 5,
-    STATE_ULTRASOUND_CLOSE = 6,
+    STATE_IDLE = 1,
+    STATE_LOAD_CELL_FULL = 2,
+    STATE_LOAD_CELL_EMPTY = 3,
+    STATE_WATER_LEVEL_DOWN = 4,
+    STATE_WATER_LEVEL_OK = 5,
+    STATE_ULTRASOUND_FAR = 6,
+    STATE_ULTRASOUND_CLOSE = 7,
 };
 
 enum Events
 {
-    INSUFFICIENT_FOOD = 0,
-    SUFFICIENT_FOOD = 1,
-    INSUFFICIENT_WATER = 2,
-    SUFFICIENT_WATER = 3,
-    OBJECT_NEARBY = 4,
-    OBJECT_FAR = 5,
-    RETURN_TO_IDLE = 6,
+    INSUFFICIENT_FOOD = 1,
+    SUFFICIENT_FOOD = 2,
+    INSUFFICIENT_WATER = 3,
+    SUFFICIENT_WATER = 4,
+    OBJECT_NEARBY = 5,
+    OBJECT_FAR = 6,
+    RETURN_TO_IDLE = 7,
 };
 
 int potValue = 0;
 int angle = 0;
 int objectTime = 0;
 int objectDistance = 0;
+int waterLed = 0;
+int ultraLed = 0;
 float weight = 0.0;
 float calibration_factor = 420.0;
 unsigned long timeSinceBoot;
@@ -101,29 +103,13 @@ void concurrentServoTask(void *parameters) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         // Once awakened, perform the logic that was previously time-delayed.
-        currentEvent = calculateFood();
-        if (currentEvent == INSUFFICIENT_FOOD) {
-            HandleLoadCellEmpty();
-        } else if (currentEvent == SUFFICIENT_FOOD) {
-            HandleLoadCellFull();
+        while (weight < WeightThreshold)
+        {
+            servo1.write(ServoNormalPosition);
         }
+        servo1.write(ServoLowWeightPosition);
     }
 }
-
-/*
-void concurrentReadSensorsAndPerformCalculations(void *parameters) {
-    while(1) {
-        potValue = analogRead(PotentiometerPin);
-        objectTime = readUltrasonicSensor();
-        readLoadCell();
-        performCalculations();
-        vTaskDelay(TIMER_GLOBAL);
-        
-        getEvent();
-        getNewState();
-    }
-}
-*/
 
 bool timestampEnabler(unsigned long* lastTimestamp)
 {
@@ -167,17 +153,15 @@ void setup()
     ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
     ledcAttachChannel(LedPinFood, ledFrequency, ledResolution, LedPinFoodChannel);
 
-    /*xTaskCreate(concurrentReadSensorsAndPerformCalculations,"concurrent_sensor_task",TAM_PILA, NULL, PRIORITY_MEDIUM, NULL);*/
-
     xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, PRIORITY_MEDIUM, &TaskHandlerCallback);
     callbackTimer = xTimerCreate("timer",pdMS_TO_TICKS(TIMER_GLOBAL),pdTRUE,NULL,callbackTemporizador);
     xTimerStart(callbackTimer, 0);
     timeSinceBoot = timeCell = millis();
 }
 
-//core 1 by default
 void loop()
 {
+    //Lectura de sensores
     potValue = analogRead(PotentiometerPin);
     objectTime = readUltrasonicSensor();
     
@@ -186,163 +170,55 @@ void loop()
         readLoadCell();
     }
     
+    //Ejecucion de calculos en base a sensores
     performCalculations();
-
-        
+    
+    //Obtencion del evento actual en base a sensores
     getEvent();
-    getNewState();
 
     stateMachine();
 }
 
 void stateMachine()
-{
-    if(timestampEnabler(&timeSinceBoot)){
-    showLogs();
-    }
+{   
+    //Obtencion del estado actual en base al evento
+    getState();
 
+    if(timestampEnabler(&timeSinceBoot)){
+        //Logs periodicos
+        showLogs();
+    }
 
     switch (currentState)
     {
     case STATE_IDLE:
-        /*
-        Dummy
-        */
-    break;
-/*
-    case STATE_LOAD_CELL_FULL:
-
-        switch (currentEvent)
-        {
-        case SUFFICIENT_FOOD:
-            break;
-
-        case INSUFFICIENT_FOOD:
-            currentState = STATE_LOAD_CELL_EMPTY;
-            break;
-
-        default:
-            Serial.println("Unknown event!");
-            break;
-        }
-
+        //Do nothing
         break;
-*/
-/*
-    case STATE_LOAD_CELL_EMPTY:
 
-        switch (currentEvent)
-        {
-        case SUFFICIENT_FOOD:
-            currentState = STATE_LOAD_CELL_FULL;
-            break;
-
-        case INSUFFICIENT_FOOD:
-            currentEvent = calculateFood();
-            break;
-
-        default:
-            Serial.println("Unknown event!");
-            break;
-        }
-
-        break;
-*/
     case STATE_WATER_LEVEL_DOWN:
-
-        switch (currentEvent)
-        {
-        case SUFFICIENT_WATER:
-            currentState = STATE_WATER_LEVEL_OK;
-            break;
-        case INSUFFICIENT_WATER:
-            HandleWaterLevelDown();
-            break;
-
-        default:
-            if (timestampEnabler(&timeSinceBoot))
-            {
-                Serial.println("Unknown event!");
-            }
-            break;
-        }
-
+        ledcWrite(LedPinWater, ledHigh);
+        waterLed = true;
         break;
 
     case STATE_WATER_LEVEL_OK:
-
-        switch (currentEvent)
-        {
-        case SUFFICIENT_WATER:
-            HandleWaterLevelOk();
-            break;
-        case INSUFFICIENT_WATER:
-            currentState = STATE_WATER_LEVEL_DOWN;
-            break;
-
-        default:
-            if (timestampEnabler(&timeSinceBoot))
-            {
-                Serial.println("Unknown event!");
-            }
-            break;
-        }
-
+        ledcWrite(LedPinWater, ledLow);
+        waterLed = false;
         break;
 
     case STATE_ULTRASOUND_FAR:
-
-        switch (currentEvent)
-        {
-        case OBJECT_FAR:
-            HandleUltrasoundFar();
-            break;
-
-        case OBJECT_NEARBY:
-            currentState = STATE_ULTRASOUND_CLOSE;
-            break;
-
-        default:
-            if (timestampEnabler(&timeSinceBoot))
-            {
-                Serial.println("Unknown event!");
-            }
-            break;
-        }
-
+        ledcWrite(LedPinFood, ledHigh);
+        ultraLed = true;
         break;
 
     case STATE_ULTRASOUND_CLOSE:
-
-        switch (currentEvent)
-        {
-        case OBJECT_FAR:
-            currentState = STATE_ULTRASOUND_FAR;
-            break;
-
-        case OBJECT_NEARBY:
-            HandleUltrasoundClose();
-            break;
-
-        default:
-            if (timestampEnabler(&timeSinceBoot))
-            {
-                Serial.println("Unknown event!");
-            }
-            break;
-        }
-
+        ledcWrite(LedPinFood, ledLow);
+        ultraLed = false;
         break;
 
     default:
-        if (timestampEnabler(&timeSinceBoot))
-        {
-            Serial.println("Unknown event!");
-        }
+        Serial.println("Unknown State!");
         break;
     }
-
-    // showLogs();
 }
 
 long readUltrasonicSensor()
@@ -378,86 +254,49 @@ void performCalculations()
     objectDistance = 0.01723 * objectTime;
 }
 
-void HandleLoadCellFull()
-{
-    servo1.write(ServoNormalPosition);
-    currentState = STATE_IDLE;
-}
-
-void HandleLoadCellEmpty()
-{
-    servo1.write(ServoLowWeightPosition);
-    currentState = STATE_IDLE;
-}
-
-void HandleWaterLevelDown()
-{
-    ledcWrite(LedPinWater, ledHigh);
-    currentState = STATE_IDLE;
-}
-
-void HandleWaterLevelOk()
-{
-    ledcWrite(LedPinWater, ledLow);
-    currentState = STATE_IDLE;
-}
-
-void HandleUltrasoundFar()
-{
-    ledcWrite(LedPinFood, ledHigh);
-    currentState = STATE_IDLE;
-}
-
-void HandleUltrasoundClose()
-{
-    ledcWrite(LedPinFood, ledLow);
-    currentState = STATE_IDLE;
-}
-
-int calculateFood()
-{
-    if (weight < WeightThreshold)
-    {
-        return INSUFFICIENT_FOOD;
-    }
-    else
-    {
-        return SUFFICIENT_FOOD;
-    }
-}
-
 void getEvent()
 {
-    int lastEvent = currentEvent;
-    currentEvent = STATE_IDLE;
+    //Vuelvo a IDLE por defecto
+    currentEvent = RETURN_TO_IDLE;
 
-    if (potValue < PotThreshold && currentEvent == STATE_IDLE && lastEvent != INSUFFICIENT_WATER)
+    //Evaluo eventos segun sensor de agua
+    switch (waterLed)
     {
-        currentEvent = INSUFFICIENT_WATER;
+        case true:
+            if (potValue >= PotThreshold)
+            {
+                currentEvent = SUFFICIENT_WATER;
+            }
+            break;
+
+        case false:
+            if (potValue < PotThreshold)
+            {
+                currentEvent = INSUFFICIENT_WATER;
+            }
+            break;
     }
 
-    if (objectDistance >= DistanceThreshold && objectDistance > 0 && currentEvent == STATE_IDLE && lastEvent != OBJECT_FAR)
+    //Evaluo eventos segun sensor de ultrasonido
+    switch (ultraLed)
     {
-        currentEvent = OBJECT_FAR;
-    }
+        case true:
+            if (objectDistance < DistanceThreshold)
+            {
+                currentEvent = OBJECT_NEARBY;
+            }
+            break;
 
-    if (potValue >= PotThreshold && currentEvent == STATE_IDLE && lastEvent != SUFFICIENT_WATER)
-    {
-        currentEvent = SUFFICIENT_WATER;
-    }
-
-    if (objectDistance < DistanceThreshold && objectDistance > 0 && currentEvent == STATE_IDLE && lastEvent != OBJECT_NEARBY)
-    {
-        currentEvent = OBJECT_NEARBY;
-    }
-
-    if (currentEvent == STATE_IDLE)
-    {
-        currentEvent = RETURN_TO_IDLE;
+        case false:
+            if (objectDistance >= DistanceThreshold)
+            {
+                currentEvent = OBJECT_FAR;
+            }
+            break;
     }
 }
 
-void getNewState()
+void getState()
 {
     switch (currentEvent)
     {
@@ -480,14 +319,13 @@ void getNewState()
         currentState = STATE_IDLE;
         break;
     default:
-        Serial.println("Unknown event!");
+        Serial.println("Unknown Event!");
         break;
     }
 }
 
 void showLogs()
 {
-
     Serial.print("Weight: ");
     Serial.print(weight, 3);
     Serial.print("g");
@@ -507,4 +345,3 @@ void showLogs()
 
     Serial.println();
 }
-
