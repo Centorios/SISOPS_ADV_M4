@@ -36,78 +36,63 @@
 
 #define TAM_PILA 1024
 
-enum Priorities
+enum States
 {
-    PRIORITY_HIGH = 0,
-    PRIORITY_MEDIUM = 1,
-    PRIORITY_LOW = 2,
+    STATE_IDLE = 1,
+    STATE_LOAD_CELL_EMPTY = 2,
+    STATE_WATER_LEVEL_DOWN = 3,
+    STATE_WATER_LEVEL_OK = 4,
+    STATE_ULTRASOUND_FAR = 5,
+    STATE_ULTRASOUND_CLOSE = 6,
 };
 
+enum Events
+{
+    INSUFFICIENT_FOOD = 1,
+    INSUFFICIENT_WATER = 2,
+    SUFFICIENT_WATER = 3,
+    OBJECT_NEARBY = 4,
+    OBJECT_FAR = 5,
+    RETURN_TO_IDLE = 6,
+};
 
 int const ServoLowWeightPosition = 90;
 int const ServoNormalPosition = 0;
 
 int currentState = 0;
 int currentEvent = 0;
-
-enum States
-{
-    STATE_IDLE = 1,
-    STATE_LOAD_CELL_FULL = 2,
-    STATE_LOAD_CELL_EMPTY = 3,
-    STATE_WATER_LEVEL_DOWN = 4,
-    STATE_WATER_LEVEL_OK = 5,
-    STATE_ULTRASOUND_FAR = 6,
-    STATE_ULTRASOUND_CLOSE = 7,
-};
-
-enum Events
-{
-    INSUFFICIENT_FOOD = 1,
-    SUFFICIENT_FOOD = 2,
-    INSUFFICIENT_WATER = 3,
-    SUFFICIENT_WATER = 4,
-    OBJECT_NEARBY = 5,
-    OBJECT_FAR = 6,
-    RETURN_TO_IDLE = 7,
-};
-
 int potValue = 0;
 int angle = 0;
 int objectTime = 0;
 int objectDistance = 0;
 int waterLed = 0;
 int ultraLed = 0;
+int ServoChk = 0;
+
 float weight = 0.0;
 float calibration_factor = 420.0;
+
 unsigned long timeSinceBoot;
 unsigned long timeCell;
 
 Servo servo1;
 HX711 loadCell;
 
-TimerHandle_t callbackTimer;
-TaskHandle_t TaskHandlerCallback;
+static TaskHandle_t ServoHandler = NULL;
 
-void callbackTemporizador(TimerHandle_t xTimer) {
-    // Wake the servo task (counting notification)
-    xTaskNotifyGive(TaskHandlerCallback);
-}
+static void concurrentServoTask(void *parameters) {
+    while(1)
+    {   
+        // Espera notificación
+        ulTaskNotifyTake(pdFALSE, portMAX_DELAY);
 
-void concurrentServoTask(void *parameters) {
-    ulTaskNotifyTake(pdTRUE, 0);
-    while(1) {
-        // Block here until the timer gives a notification.
-        // pdTRUE: clear (consume) the count so we don't accumulate stale ticks.
-        // portMAX_DELAY: wait indefinitely.
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        // Once awakened, perform the logic that was previously time-delayed.
+        // Resuelve tarea del servo
         while (weight < WeightThreshold)
         {
             servo1.write(ServoNormalPosition);
         }
         servo1.write(ServoLowWeightPosition);
+        ServoChk = false;
     }
 }
 
@@ -153,9 +138,8 @@ void setup()
     ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
     ledcAttachChannel(LedPinFood, ledFrequency, ledResolution, LedPinFoodChannel);
 
-    xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, PRIORITY_MEDIUM, &TaskHandlerCallback);
-    callbackTimer = xTimerCreate("timer",pdMS_TO_TICKS(TIMER_GLOBAL),pdTRUE,NULL,callbackTemporizador);
-    xTimerStart(callbackTimer, 0);
+    xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, 0, &ServoHandler);
+
     timeSinceBoot = timeCell = millis();
 }
 
@@ -213,6 +197,11 @@ void stateMachine()
     case STATE_ULTRASOUND_CLOSE:
         ledcWrite(LedPinFood, ledLow);
         ultraLed = false;
+        break;
+
+    case STATE_LOAD_CELL_EMPTY:
+        xTaskNotifyGive(ServoHandler);
+        ServoChk = true;
         break;
 
     default:
@@ -293,6 +282,20 @@ void getEvent()
                 currentEvent = OBJECT_FAR;
             }
             break;
+    }
+
+    switch(ServoChk)
+    {
+        case true:
+            //Do nothinf
+        break;
+
+        case false:
+            if (weight < WeightThreshold)
+            {
+                currentEvent = INSUFFICIENT_FOOD;
+            }
+        break;
     }
 }
 
