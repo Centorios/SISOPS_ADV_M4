@@ -3,13 +3,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-// LedPinWater se enciende si falta agua (potenciometro)
-// LedPinFood se enciende si falta comida (ultrasonido)
-// Servo se mueve si el peso baja de 1 kg (empieza a servir comida)
-// Servo vuelve a su posición si el peso sube de 1 kg (deja de servir comida)
-
-#define LedPinWater 22
-#define LedPinFood 23
+#define LedPinWater 22 // LedPinWater se enciende si falta agua (potenciometro)
+#define LedPinFood 23 // LedPinFood se enciende si falta comida (ultrasonido)
 #define ledResolution 8
 #define ledFrequency 5000
 #define ledHigh 255
@@ -28,49 +23,52 @@
 #define DistanceThreshold 20
 
 #define TIMER_CELL 1000 //1000ms = 1s
-#define TIMER_GLOBAL 100 //100ms
+#define TIMER_INIT 300 //300ms
 #define TIMER_LOGS 1500 //1500ms
 
-//120g
-#define WeightThreshold 0.120
+#define WeightThreshold 0.120 //120g
 
-#define TAM_PILA 1024
+#define TAM_PILA 1024 //Tamano de pila de xTask
+#define TAM_COLA 8 //Tamano de cola xQueue
 
 enum States
 {
-    STATE_IDLE = 1,
-    STATE_LOAD_CELL_EMPTY = 2,
-    STATE_WATER_LEVEL_DOWN = 3,
-    STATE_WATER_LEVEL_OK = 4,
-    STATE_ULTRASOUND_FAR = 5,
-    STATE_ULTRASOUND_CLOSE = 6,
+    INIT = 1,
+    SENSING = 2,
+    LOAD_CELL = 3,
 };
 
 enum Events
 {
-    INSUFFICIENT_FOOD = 1,
-    INSUFFICIENT_WATER = 2,
-    SUFFICIENT_WATER = 3,
-    OBJECT_NEARBY = 4,
-    OBJECT_FAR = 5,
-    RETURN_TO_IDLE = 6,
+    FOOD_OK = 1,
+    NO_FOOD = 2,
+    NO_WATER = 3,
+    WATER_OK = 4,
+    ULTRA_NEARBY = 5,
+    ULTRA_FAR = 6,
+    NO_EVENT = 7,
 };
 
 int const ServoLowWeightPosition = 90;
 int const ServoNormalPosition = 0;
 
+float const calibration_factor = 420.0;
+
 int currentState = 0;
 int currentEvent = 0;
+
 int potValue = 0;
 int angle = 0;
 int objectTime = 0;
 int objectDistance = 0;
+
+float weight = 0.0;
+
+int servoAngle = 0;
+
 int waterLed = 0;
 int ultraLed = 0;
 int ServoChk = 0;
-
-float weight = 0.0;
-float calibration_factor = 420.0;
 
 unsigned long timeSinceBoot;
 unsigned long timeCell;
@@ -79,20 +77,22 @@ Servo servo1;
 HX711 loadCell;
 
 static TaskHandle_t ServoHandler = NULL;
+static QueueHandle_t ServoQueue;
 
-static void concurrentServoTask(void *parameters) {
+// Servo se mueve si el peso baja de 1 kg (empieza a servir comida)
+// Servo vuelve a su posición si el peso sube de 1 kg (deja de servir comida)
+static void concurrentServoTask(void *parameters) 
+{
+    int value;
+
     while(1)
     {   
-        // Espera notificación
-        ulTaskNotifyTake(pdFALSE, portMAX_DELAY);
-
-        // Resuelve tarea del servo
-        while (weight < WeightThreshold)
-        {
-            servo1.write(ServoNormalPosition);
+        // Cuando recive algo en al cola, ejecuta
+        if (xQueueReceive(ServoQueue, &value, portMAX_DELAY) == pdPASS)
+        {               
+            // Resuelve tarea del servo
+            servo1.write(value);
         }
-        servo1.write(ServoLowWeightPosition);
-        ServoChk = false;
     }
 }
 
@@ -104,110 +104,6 @@ bool timestampEnabler(unsigned long* lastTimestamp)
         return true;
     }
     return false;
-}
-
-void setup()
-{
-    Serial.begin(9600);
-    Serial.println("System starting...");
-
-    servo1.attach(ServoPin, 500, 2500);
-    servo1.write(ServoNormalPosition);
-
-    loadCell.begin(LoadCellDTPin, LoadCellSCKPin);
-    Serial.println("Load cell initializing...");
-
-    while (!loadCell.is_ready()) {
-        Serial.println("Waiting for load cell...");
-        delay(TIMER_CELL);
-    }
-
-    loadCell.set_scale(calibration_factor);
-
-    Serial.println("Remove all weight from the load cell and press any key to tare...");
-    while (!Serial.available()) { }
-    Serial.read();
-    loadCell.tare(10);
-
-    Serial.println("Load cell tared and ready!");
-    Serial.print("Current calibration factor: ");
-    Serial.println(calibration_factor);
-
-    pinMode(TriggerPin, OUTPUT);
-    pinMode(EchoPin, INPUT);
-    ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
-    ledcAttachChannel(LedPinFood, ledFrequency, ledResolution, LedPinFoodChannel);
-
-    xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, 0, &ServoHandler);
-
-    timeSinceBoot = timeCell = millis();
-}
-
-void loop()
-{
-    //Lectura de sensores
-    potValue = analogRead(PotentiometerPin);
-    objectTime = readUltrasonicSensor();
-    
-    if ((millis() - timeCell) >= TIMER_CELL)
-    {   
-        readLoadCell();
-    }
-    
-    //Ejecucion de calculos en base a sensores
-    performCalculations();
-    
-    //Obtencion del evento actual en base a sensores
-    getEvent();
-
-    stateMachine();
-}
-
-void stateMachine()
-{   
-    //Obtencion del estado actual en base al evento
-    getState();
-
-    if(timestampEnabler(&timeSinceBoot)){
-        //Logs periodicos
-        showLogs();
-    }
-
-    switch (currentState)
-    {
-    case STATE_IDLE:
-        //Do nothing
-        break;
-
-    case STATE_WATER_LEVEL_DOWN:
-        ledcWrite(LedPinWater, ledHigh);
-        waterLed = true;
-        break;
-
-    case STATE_WATER_LEVEL_OK:
-        ledcWrite(LedPinWater, ledLow);
-        waterLed = false;
-        break;
-
-    case STATE_ULTRASOUND_FAR:
-        ledcWrite(LedPinFood, ledHigh);
-        ultraLed = true;
-        break;
-
-    case STATE_ULTRASOUND_CLOSE:
-        ledcWrite(LedPinFood, ledLow);
-        ultraLed = false;
-        break;
-
-    case STATE_LOAD_CELL_EMPTY:
-        xTaskNotifyGive(ServoHandler);
-        ServoChk = true;
-        break;
-
-    default:
-        Serial.println("Unknown State!");
-        break;
-    }
 }
 
 long readUltrasonicSensor()
@@ -243,90 +139,6 @@ void performCalculations()
     objectDistance = 0.01723 * objectTime;
 }
 
-void getEvent()
-{
-    //Vuelvo a IDLE por defecto
-    currentEvent = RETURN_TO_IDLE;
-
-    //Evaluo eventos segun sensor de agua
-    switch (waterLed)
-    {
-        case true:
-            if (potValue >= PotThreshold)
-            {
-                currentEvent = SUFFICIENT_WATER;
-            }
-            break;
-
-        case false:
-            if (potValue < PotThreshold)
-            {
-                currentEvent = INSUFFICIENT_WATER;
-            }
-            break;
-    }
-
-    //Evaluo eventos segun sensor de ultrasonido
-    switch (ultraLed)
-    {
-        case true:
-            if (objectDistance < DistanceThreshold)
-            {
-                currentEvent = OBJECT_NEARBY;
-            }
-            break;
-
-        case false:
-            if (objectDistance >= DistanceThreshold)
-            {
-                currentEvent = OBJECT_FAR;
-            }
-            break;
-    }
-
-    switch(ServoChk)
-    {
-        case true:
-            //Do nothinf
-        break;
-
-        case false:
-            if (weight < WeightThreshold)
-            {
-                currentEvent = INSUFFICIENT_FOOD;
-            }
-        break;
-    }
-}
-
-void getState()
-{
-    switch (currentEvent)
-    {
-    case INSUFFICIENT_FOOD:
-        currentState = STATE_LOAD_CELL_EMPTY;
-        break;
-    case INSUFFICIENT_WATER:
-        currentState = STATE_WATER_LEVEL_DOWN;
-        break;
-    case SUFFICIENT_WATER:
-        currentState = STATE_WATER_LEVEL_OK;
-        break;
-    case OBJECT_NEARBY:
-        currentState = STATE_ULTRASOUND_CLOSE;
-        break;
-    case OBJECT_FAR:
-        currentState = STATE_ULTRASOUND_FAR;
-        break;
-    case RETURN_TO_IDLE:
-        currentState = STATE_IDLE;
-        break;
-    default:
-        Serial.println("Unknown Event!");
-        break;
-    }
-}
-
 void showLogs()
 {
     Serial.print("Weight: ");
@@ -347,4 +159,243 @@ void showLogs()
     Serial.print(currentEvent);
 
     Serial.println();
+}
+
+void initSignal()
+{
+    int ledValue;
+    unsigned long timer = timeSinceBoot;
+
+    Serial.println("System starting...");
+
+    for (int i=0; i<6; i++)
+    {
+        if ((i % 2) == 0)
+        {
+            ledValue = ledHigh;
+        }
+        else
+        {
+            ledValue = ledLow;
+        }
+
+        ledcWrite(LedPinWater, ledValue);
+        ledcWrite(LedPinFood, ledValue);
+        vTaskDelay(TIMER_INIT);
+    }
+
+    currentState = SENSING;
+}
+
+void getEvent()
+{
+    // Evento por defecto
+    currentEvent = NO_EVENT;
+
+    // Evaluo eventos segun sensor de agua
+    switch (waterLed)
+    {
+        case true:
+            if (potValue >= PotThreshold)
+            {
+                currentEvent = WATER_OK;
+            }
+            break;
+
+        case false:
+            if (potValue < PotThreshold)
+            {
+                currentEvent = NO_WATER;
+            }
+            break;
+    }
+
+    // Evaluo eventos segun sensor de ultrasonido
+    switch (ultraLed)
+    {
+        case true:
+            if (objectDistance < DistanceThreshold)
+            {
+                currentEvent = ULTRA_NEARBY;
+            }
+            break;
+
+        case false:
+            if (objectDistance >= DistanceThreshold)
+            {
+                currentEvent = ULTRA_FAR;
+            }
+            break;
+    }
+
+    // Evaluo eventos segun celular de carga
+    switch (ServoChk)
+    {
+        case true:
+            if (weight >= WeightThreshold)
+            {
+                currentEvent = FOOD_OK;
+            }
+            break;
+
+        case false:
+            if (weight < WeightThreshold)
+            {
+                currentEvent = NO_FOOD;
+            }
+            break;
+    }
+}
+
+void SolveEvent()
+{
+    // Manejo local de valores
+    int servoValue = servoAngle;
+
+    switch (currentEvent)
+    {
+        case NO_EVENT:
+            // Do nothing
+            break;
+
+        case NO_WATER:
+            waterLed = true;
+            ledcWrite(LedPinWater, ledHigh);
+            break;
+
+        case WATER_OK:
+            waterLed = false;
+            ledcWrite(LedPinWater, ledLow);
+            break;
+
+        case ULTRA_FAR:
+            ultraLed = true;
+            ledcWrite(LedPinFood, ledHigh);
+            break;
+
+        case ULTRA_NEARBY:
+            ultraLed = false;
+            ledcWrite(LedPinFood, ledLow);
+            break;
+
+        case NO_FOOD:
+            ServoChk = true;
+            if (xQueueSend(ServoQueue, &servoValue, portMAX_DELAY) == pdPASS)
+            {
+                currentState = LOAD_CELL;
+            }
+            else
+            {
+                Serial.println("xQueue full!");
+            }
+            break;
+        
+        case FOOD_OK:
+            ServoChk = false;
+            if (xQueueSend(ServoQueue, &servoValue, portMAX_DELAY) == pdPASS)
+            {
+                currentState = SENSING;
+            }
+            else
+            {
+                Serial.println("xQueue full!");
+            }
+            break;
+            
+        default:
+            Serial.println("Unknown Event!");
+            break;
+    }
+}
+
+void stateMachine()
+{   
+    // Obtencion del evento actual en base a sensores
+    getEvent();
+
+    // Logs periodicos
+    if (timestampEnabler(&timeSinceBoot))
+    {
+        showLogs();
+    }
+    
+    switch (currentState)
+    {
+    case INIT:
+        // Parpadeo de inico
+        initSignal();
+        break;
+    
+    case SENSING:
+        // Seteo el angulo del servo para cuando corresponda abrirlo
+        servoAngle = ServoLowWeightPosition;
+        SolveEvent();
+        break;
+    
+    case LOAD_CELL:
+        // Seteo el angulo del servo para cuando corresponda cerrarlo
+        servoAngle = ServoNormalPosition;
+        SolveEvent();
+        break;
+
+    default:
+        Serial.println("Unknown State!");
+        break;
+    }
+}
+
+void setup()
+{
+    Serial.begin(9600);
+
+    servo1.attach(ServoPin, 500, 2500);
+    servo1.write(ServoNormalPosition);
+
+    loadCell.begin(LoadCellDTPin, LoadCellSCKPin);
+    Serial.println("Load cell initializing...");
+
+    while (!loadCell.is_ready()) {
+        Serial.println("Waiting for load cell...");
+        delay(TIMER_CELL);
+    }
+
+    loadCell.set_scale(calibration_factor);
+
+    Serial.println("Remove all weight from the load cell and press any key to tare...");
+    while (!Serial.available()) { }
+    Serial.read();
+    loadCell.tare(10);
+
+    Serial.println("Load cell tared and ready!");
+    Serial.print("Current calibration factor: ");
+    Serial.println(calibration_factor);
+
+    pinMode(TriggerPin, OUTPUT);
+    pinMode(EchoPin, INPUT);
+    ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
+    ledcAttachChannel(LedPinFood, ledFrequency, ledResolution, LedPinFoodChannel);
+
+    xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, 0, &ServoHandler);
+    ServoQueue = xQueueCreate(TAM_COLA, sizeof(int));
+
+    timeSinceBoot = timeCell = millis();
+
+    currentState = INIT;
+}
+
+void loop()
+{
+    // Lectura de sensores
+    potValue = analogRead(PotentiometerPin);
+    objectTime = readUltrasonicSensor();
+    
+    if ((millis() - timeCell) >= TIMER_CELL)
+    {   
+        readLoadCell();
+    }
+    
+    // Ejecucion de calculos en base a sensores
+    performCalculations();
+    
+    stateMachine();
 }
