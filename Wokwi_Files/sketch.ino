@@ -2,6 +2,7 @@
 #include <HX711.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <WiFi.h>
 
 #define LedPinWater 22 // LedPinWater se enciende si falta agua (potenciometro)
 #define LedPinFood 23 // LedPinFood se enciende si falta comida (ultrasonido)
@@ -16,7 +17,7 @@
 #define LoadCellSCKPin 16
 #define TriggerPin 19
 #define EchoPin 18
-#define ServoPin 35
+#define ServoPin 33
 #define PotentiometerPin 34
 
 #define PotThreshold 2048
@@ -30,6 +31,9 @@
 
 #define TAM_PILA 1024 //Tamano de pila de xTask
 #define TAM_COLA 8 //Tamano de cola xQueue
+
+#define SECRET_SSID "Wokwi-GUEST"
+#define SECRET_PSW ""
 
 enum States
 {
@@ -51,6 +55,9 @@ enum Events
 
 int const ServoLowWeightPosition = 90;
 int const ServoNormalPosition = 0;
+
+const char* ssid = SECRET_SSID;
+const char* password = SECRET_PSW;
 
 float const calibration_factor = 420.0;
 
@@ -161,27 +168,39 @@ void showLogs()
 
 void initSignal()
 {
-    int ledValue;
-    unsigned long timer = timeSinceBoot;
+    bool ledValue = false;
+    int counter = 0;
 
     Serial.println("System starting...");
 
-    for (int i=0; i<6; i++)
+    WiFi.begin(ssid, password);
+    Serial.println("Connecting to WiFi...");
+
+    while (WiFi.status() != WL_CONNECTED && counter <= 6) 
     {
-        if ((i % 2) == 0)
+        ledValue = !ledValue;
+
+        if (ledValue == true)
         {
-            ledValue = ledHigh;
+            ledcWrite(LedPinWater, ledHigh);
+            ledcWrite(LedPinFood, ledHigh);
         }
         else
         {
-            ledValue = ledLow;
+            ledcWrite(LedPinWater, ledLow);
+            ledcWrite(LedPinFood, ledLow);
         }
 
-        ledcWrite(LedPinWater, ledValue);
-        ledcWrite(LedPinFood, ledValue);
+        counter++;
         vTaskDelay(TIMER_INIT);
     }
 
+    Serial.println("Connected to the WiFi network");
+
+    // Apago los leds antes de finalizar el estado
+    ledcWrite(LedPinWater, ledLow);
+    ledcWrite(LedPinFood, ledLow);
+    
     currentState = SENSING;
 }
 
@@ -365,9 +384,12 @@ void setup()
     loadCell.tare(10);
 
     Serial.println("Load cell tared and ready!");
+
     Serial.print("Current calibration factor: ");
     Serial.println(calibration_factor);
 
+    timeSinceBoot = timeCell = millis();
+    currentState = INIT;
     pinMode(TriggerPin, OUTPUT);
     pinMode(EchoPin, INPUT);
     ledcAttachChannel(LedPinWater, ledFrequency, ledResolution, LedPinWaterChannel);
@@ -375,10 +397,6 @@ void setup()
 
     xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, 0, &ServoHandler);
     ServoQueue = xQueueCreate(TAM_COLA, sizeof(int));
-
-    timeSinceBoot = timeCell = millis();
-
-    currentState = INIT;
 }
 
 void loop()
