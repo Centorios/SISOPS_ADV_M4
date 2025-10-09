@@ -12,12 +12,12 @@
 #define LedPinWaterChannel 6
 #define LedPinFoodChannel 7
 
-#define LoadCellDTPin 4
-#define LoadCellSCKPin 2
-#define TriggerPin 27
-#define EchoPin 26
-#define ServoPin 33
-#define PotentiometerPin 35
+#define LoadCellDTPin 17
+#define LoadCellSCKPin 16
+#define TriggerPin 19
+#define EchoPin 18
+#define ServoPin 35
+#define PotentiometerPin 34
 
 #define PotThreshold 2048
 #define DistanceThreshold 20
@@ -58,7 +58,6 @@ int currentState = 0;
 int currentEvent = 0;
 
 int potValue = 0;
-int angle = 0;
 int objectTime = 0;
 int objectDistance = 0;
 
@@ -135,7 +134,6 @@ void readLoadCell()
 
 void performCalculations()
 {
-    angle = map(potValue, 0, 4096, 0, 180);
     objectDistance = 0.01723 * objectTime;
 }
 
