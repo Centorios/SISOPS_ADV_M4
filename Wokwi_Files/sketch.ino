@@ -17,7 +17,7 @@
 #define LoadCellSCKPin 16
 #define TriggerPin 19
 #define EchoPin 18
-#define ServoPin 33
+#define ServoPin 5
 #define PotentiometerPin 34
 
 #define PotThreshold 2048
