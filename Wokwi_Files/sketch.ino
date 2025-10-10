@@ -3,6 +3,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <WiFi.h>
+#include "PubSubClient.h"
+#include "ArduinoJson.h"
 
 #define LedPinWater 22 // LedPinWater se enciende si falta agua (potenciometro)
 #define LedPinFood 23 // LedPinFood se enciende si falta comida (ultrasonido)
@@ -58,6 +60,7 @@ int const ServoNormalPosition = 0;
 
 const char* ssid = SECRET_SSID;
 const char* password = SECRET_PSW;
+const char* mqtt_server = "broker.mqttdashboard.com";
 
 float const calibration_factor = 420.0;
 
@@ -81,6 +84,9 @@ unsigned long timeCell;
 
 Servo servo1;
 HX711 loadCell;
+
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 static TaskHandle_t ServoHandler = NULL;
 static QueueHandle_t ServoQueue;
@@ -144,26 +150,49 @@ void performCalculations()
     objectDistance = 0.01723 * objectTime;
 }
 
+void sendByMqtt(JsonDocument json)
+{
+    char message[128];
+
+    // Loop hasta que estemos conectados
+    while (!client.loop())
+    {
+        Serial.print("Connecting to MQTT...");
+
+        // Intentamos conectar
+        if (client.connect("ESP32Client", NULL, "Wokwi/test")) 
+        {
+            Serial.println(" Connected");
+            
+            // Envia mensaje al topic
+            serializeJson(json, message);
+            client.publish("Wokwi/test", message);
+            Serial.print("Mensaje publicado, ");
+            Serial.println(client.state());
+        }
+        else 
+        {
+            Serial.println(" Failed, retring in 1 second");
+        }
+    }
+}
+
 void showLogs()
 {
-    Serial.print("Weight: ");
-    Serial.print(weight, 3);
-    Serial.print("g");
+    JsonDocument logs;
 
-    Serial.print(" PotValue:");
-    Serial.print(potValue);
+    logs["Weight (g)"] = weight;
+    logs["PotValue"] = potValue;
+    logs["Distance (cm)"] = objectDistance;
+    logs["State"] = currentState;
+    logs["Event"] = currentEvent;
 
-    Serial.print(" Distance: ");
-    Serial.print(objectDistance);
-    Serial.print("cm");
+    sendByMqtt(logs);
+}
 
-    Serial.print(" State:");
-    Serial.print(currentState);
-
-    Serial.print(" Event:");
-    Serial.print(currentEvent);
-
-    Serial.println();
+void callback(char* topic, byte* message, unsigned int length) 
+{
+    //Do nothing
 }
 
 void initSignal()
@@ -174,7 +203,7 @@ void initSignal()
     Serial.println("System starting...");
 
     WiFi.begin(ssid, password);
-    Serial.println("Connecting to WiFi...");
+    Serial.print("Connecting to WiFi...");
 
     while (WiFi.status() != WL_CONNECTED && counter <= 6) 
     {
@@ -195,7 +224,7 @@ void initSignal()
         vTaskDelay(TIMER_INIT);
     }
 
-    Serial.println("Connected to the WiFi network");
+    Serial.println("Connected");
 
     // Apago los leds antes de finalizar el estado
     ledcWrite(LedPinWater, ledLow);
@@ -397,6 +426,9 @@ void setup()
 
     xTaskCreate(concurrentServoTask,"concurrent_servo_task",TAM_PILA, NULL, 0, &ServoHandler);
     ServoQueue = xQueueCreate(TAM_COLA, sizeof(int));
+
+    client.setServer(mqtt_server, 1883);
+    client.setCallback(callback);
 }
 
 void loop()
